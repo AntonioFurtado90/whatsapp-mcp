@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -35,6 +36,7 @@ import (
 
 // mediaRetryWaiters holds channels waiting for a *events.MediaRetry response,
 // keyed by the message ID we requested a retry for.
+var storeDir = "store"
 var mediaRetryMu sync.Mutex
 var mediaRetryWaiters = map[types.MessageID]chan *events.MediaRetry{}
 
@@ -506,16 +508,15 @@ func (store *MessageStore) StoreMediaInfo(id, chatJID, url string, mediaKey, fil
 
 // Get media info from the database
 func (store *MessageStore) GetMediaInfo(id, chatJID string) (string, string, string, string, []byte, []byte, []byte, uint64, error) {
-	var mediaType, filename, url, directPath string
+	var mediaType, filename, url string
+	var directPath sql.NullString
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
 	var fileLength uint64
-
 	err := store.db.QueryRow(
 		"SELECT media_type, filename, url, direct_path, media_key, file_sha256, file_enc_sha256, file_length FROM messages WHERE id = ? AND chat_jid = ?",
 		id, chatJID,
 	).Scan(&mediaType, &filename, &url, &directPath, &mediaKey, &fileSHA256, &fileEncSHA256, &fileLength)
-
-	return mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength, err
+	return mediaType, filename, url, directPath.String, mediaKey, fileSHA256, fileEncSHA256, fileLength, err
 }
 
 // MediaDownloader implements the whatsmeow.DownloadableMessage interface
@@ -621,7 +622,7 @@ func requestMediaRetry(client *whatsmeow.Client, messageStore *MessageStore, mes
 			return "", fmt.Errorf("media retry did not return a usable direct path")
 		}
 		return notif.GetDirectPath(), nil
-	case <-time.After(15 * time.Second):
+	case <-time.After(45 * time.Second):
 		return "", fmt.Errorf("timed out waiting for media retry response (phone may be offline)")
 	}
 }
@@ -635,7 +636,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	var err error
 
 	// First, check if we already have this file
-	chatDir := fmt.Sprintf("store/%s", strings.ReplaceAll(chatJID, ":", "_"))
+	chatDir := fmt.Sprintf("%s/%s", storeDir, strings.ReplaceAll(chatJID, ":", "_"))
 	localPath := ""
 
 	// Get media info from the database
@@ -885,20 +886,23 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 }
 
 func main() {
+	if dir := os.Getenv("WHATSAPP_STORE_DIR"); dir != "" {
+		storeDir = dir
+	}
 	// Set up logger
-	logger := waLog.Stdout("Client", "INFO", true)
+	logger := waLog.Stdout("Client", "DEBUG", true)
 	logger.Infof("Starting WhatsApp client...")
 
 	// Create database connection for storing session data
 	dbLog := waLog.Stdout("Database", "INFO", true)
 
 	// Create directory for database if it doesn't exist
-	if err := os.MkdirAll("store", 0755); err != nil {
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		logger.Errorf("Failed to create store directory: %v", err)
 		return
 	}
 
-	container, err := sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", fmt.Sprintf("file:%s/whatsapp.db?_foreign_keys=on", storeDir), dbLog)
 	if err != nil {
 		logger.Errorf("Failed to connect to database: %v", err)
 		return
@@ -925,7 +929,7 @@ func main() {
 	}
 
 	// Initialize message store
-	messageStore, err := NewMessageStore("store/messages.db")
+	messageStore, err := NewMessageStore(fmt.Sprintf("%s/messages.db", storeDir))
 	if err != nil {
 		logger.Errorf("Failed to initialize message store: %v", err)
 		return
@@ -952,7 +956,7 @@ func main() {
 			if ok {
 				ch <- v
 			} else {
-				logger.Debugf("Received media retry response for unknown/expired request: %s", v.MessageID)
+				logger.Infof("Received media retry response for unknown/expired request: %s", v.MessageID)
 			}
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
@@ -1012,7 +1016,13 @@ func main() {
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
 
 	// Start REST API server
-	startRESTServer(client, messageStore, 8090)
+	restPort := 8090
+	if p := os.Getenv("WHATSAPP_REST_PORT"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil {
+			restPort = parsed
+		}
+	}
+	startRESTServer(client, messageStore, restPort)
 
 	// Create a channel to keep the main goroutine alive
 	exitChan := make(chan os.Signal, 1)

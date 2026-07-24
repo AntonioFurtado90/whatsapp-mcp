@@ -96,6 +96,11 @@ func TestStoreAndGetMediaInfo_DirectPath(t *testing.T) {
 	}
 	defer store.Close()
 
+	err = store.StoreChat("120363425169802602@g.us", "Financeiro - Esc Perdigão", time.Now())
+	if err != nil {
+		t.Fatalf("StoreChat failed: %v", err)
+	}
+
 	err = store.StoreMessage(
 		"MSG123",
 		"120363425169802602@g.us",
@@ -139,5 +144,42 @@ func TestStoreAndGetMediaInfo_DirectPath(t *testing.T) {
 	}
 	if len(mediaKey) != 3 || len(fileSHA256) != 3 || len(fileEncSHA256) != 3 {
 		t.Errorf("byte slices not round-tripped correctly")
+	}
+}
+func TestGetMediaInfo_NullDirectPath(t *testing.T) {
+	dbPath := t.TempDir() + "/test_messages.db"
+	store, err := NewMessageStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create test message store: %v", err)
+	}
+	defer store.Close()
+
+	err = store.StoreChat("120363425169802602@g.us", "Financeiro - Esc Perdigão", time.Now())
+	if err != nil {
+		t.Fatalf("StoreChat failed: %v", err)
+	}
+
+	// Simulate an old row saved before the direct_path column existed:
+	// insert directly with SQL, leaving direct_path unset (NULL), the way
+	// ALTER TABLE ADD COLUMN leaves pre-existing rows.
+	_, err = store.db.Exec(
+		`INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"OLD_MSG", "120363425169802602@g.us", "266837862400014", "", time.Now(), false,
+		"image", "old.jpg", "https://mmg.whatsapp.net/v/old.enc?oh=x", []byte{1}, []byte{2}, []byte{3}, uint64(999),
+	)
+	if err != nil {
+		t.Fatalf("failed to insert legacy row: %v", err)
+	}
+
+	mediaType, _, url, directPath, _, _, _, fileLength, err := store.GetMediaInfo("OLD_MSG", "120363425169802602@g.us")
+	if err != nil {
+		t.Fatalf("GetMediaInfo failed on row with NULL direct_path: %v", err)
+	}
+	if directPath != "" {
+		t.Errorf("directPath = %q, want empty string for legacy row with NULL direct_path", directPath)
+	}
+	if mediaType != "image" || url == "" || fileLength != 999 {
+		t.Errorf("other fields not read correctly: mediaType=%q url=%q fileLength=%d", mediaType, url, fileLength)
 	}
 }
