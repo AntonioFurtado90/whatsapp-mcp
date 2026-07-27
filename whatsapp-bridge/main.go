@@ -501,10 +501,10 @@ type DownloadMediaResponse struct {
 }
 
 // Store additional media info in the database
-func (store *MessageStore) StoreMediaInfo(id, chatJID, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
+func (store *MessageStore) StoreMediaInfo(id, chatJID, url, directPath string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	_, err := store.db.Exec(
-		"UPDATE messages SET url = ?, media_key = ?, file_sha256 = ?, file_enc_sha256 = ?, file_length = ? WHERE id = ? AND chat_jid = ?",
-		url, mediaKey, fileSHA256, fileEncSHA256, fileLength, id, chatJID,
+		"UPDATE messages SET url = ?, direct_path = ?, media_key = ?, file_sha256 = ?, file_enc_sha256 = ?, file_length = ? WHERE id = ? AND chat_jid = ?",
+		url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength, id, chatJID,
 	)
 	return err
 }
@@ -586,7 +586,10 @@ func requestMediaRetry(client *whatsmeow.Client, messageStore *MessageStore, mes
 
 	server := senderServer.String
 	if server == "" {
-		server = types.DefaultUserServer
+		// This account has fully migrated to the newer @lid addressing scheme
+		// (confirmed via wire logs); older rows saved before we captured
+		// sender_server explicitly should assume the same.
+		server = "lid"
 	}
 	senderJID := types.NewJID(sender, server)
 
@@ -625,13 +628,18 @@ func requestMediaRetry(client *whatsmeow.Client, messageStore *MessageStore, mes
 	case evt := <-respChan:
 		notif, err := whatsmeow.DecryptMediaRetryNotification(evt, mediaKey)
 		if err != nil {
+			if errors.Is(err, whatsmeow.ErrMediaNotAvailableOnPhone) {
+				// Definitive, non-retryable: the phone itself no longer has this
+				// media cached. No amount of retrying will recover it.
+				return "", fmt.Errorf("media no longer available on phone (permanently unrecoverable)")
+			}
 			return "", fmt.Errorf("failed to decrypt media retry notification: %v", err)
 		}
 		if notif.GetDirectPath() == "" {
 			return "", fmt.Errorf("media retry did not return a usable direct path")
 		}
 		return notif.GetDirectPath(), nil
-	case <-time.After(45 * time.Second):
+	case <-time.After(20 * time.Second):
 		return "", fmt.Errorf("timed out waiting for media retry response (phone may be offline)")
 	}
 }
@@ -746,7 +754,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 			}
 
 			// Persist the refreshed direct path so future downloads skip the retry.
-			if updateErr := messageStore.StoreMediaInfo(messageID, chatJID, url, mediaKey, fileSHA256, fileEncSHA256, fileLength); updateErr != nil {
+			if updateErr := messageStore.StoreMediaInfo(messageID, chatJID, url, newDirectPath, mediaKey, fileSHA256, fileEncSHA256, fileLength); updateErr != nil {
 				fmt.Printf("Warning: failed to persist refreshed media info: %v\n", updateErr)
 			}
 		} else {
@@ -899,7 +907,7 @@ func main() {
 		storeDir = dir
 	}
 	// Set up logger
-	logger := waLog.Stdout("Client", "DEBUG", true)
+	logger := waLog.Stdout("Client", "INFO", true)
 	logger.Infof("Starting WhatsApp client...")
 
 	// Create database connection for storing session data
@@ -965,7 +973,7 @@ func main() {
 			if ok {
 				ch <- v
 			} else {
-				logger.Infof("Received media retry response for unknown/expired request: %s", v.MessageID)
+				logger.Debugf("Received media retry response for unknown/expired request: %s", v.MessageID)
 			}
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
