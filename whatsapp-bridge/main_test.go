@@ -52,7 +52,7 @@ func TestExtractMediaInfo_Image(t *testing.T) {
 		},
 	}
 
-	mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)
+	mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg, "MSG_TEST_123")
 
 	if mediaType != "image" {
 		t.Errorf("mediaType = %q, want %q", mediaType, "image")
@@ -72,6 +72,9 @@ func TestExtractMediaInfo_Image(t *testing.T) {
 	if filename == "" {
 		t.Errorf("filename should not be empty")
 	}
+	if filename != "image_MSG_TEST_123.jpg" {
+		t.Errorf("filename = %q, want %q (should be based on message ID, not current time)", filename, "image_MSG_TEST_123.jpg")
+	}
 }
 
 func TestExtractMediaInfo_NoMedia(t *testing.T) {
@@ -79,7 +82,7 @@ func TestExtractMediaInfo_NoMedia(t *testing.T) {
 		Conversation: proto.String("just a text message"),
 	}
 
-	mediaType, _, _, directPath, _, _, _, _ := extractMediaInfo(msg)
+	mediaType, _, _, directPath, _, _, _, _ := extractMediaInfo(msg, "MSG_TEST_456")
 
 	if mediaType != "" {
 		t.Errorf("mediaType = %q, want empty for text-only message", mediaType)
