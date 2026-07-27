@@ -105,6 +105,7 @@ func TestStoreAndGetMediaInfo_DirectPath(t *testing.T) {
 		"MSG123",
 		"120363425169802602@g.us",
 		"266837862400014",
+		"s.whatsapp.net",
 		"",
 		time.Now(),
 		false,

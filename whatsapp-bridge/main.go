@@ -101,6 +101,8 @@ func NewMessageStore(dbPath string) (*MessageStore, error) {
 	}
 	// Add direct_path column if it doesn't exist yet (migration for existing databases)
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN direct_path TEXT`)
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN direct_path TEXT`)
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN sender_server TEXT`)
 
 	return &MessageStore{db: db}, nil
 }
@@ -120,18 +122,17 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 }
 
 // Store a message in the database
-func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
+func (store *MessageStore) StoreMessage(id, chatJID, sender, senderServer, content string, timestamp time.Time, isFromMe bool,
 	mediaType, filename, url, directPath string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
 	// Only store if there's actual content or media
 	if content == "" && mediaType == "" {
 		return nil
 	}
-
 	_, err := store.db.Exec(
 		`INSERT OR REPLACE INTO messages 
-		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, direct_path, media_key, file_sha256, file_enc_sha256, file_length) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength,
+		(id, chat_jid, sender, sender_server, content, timestamp, is_from_me, media_type, filename, url, direct_path, media_key, file_sha256, file_enc_sha256, file_length) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, chatJID, sender, senderServer, content, timestamp, isFromMe, mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength,
 	)
 	return err
 }
@@ -425,6 +426,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	// Save message to database
 	chatJID := msg.Info.Chat.String()
 	sender := msg.Info.Sender.User
+	senderServer := msg.Info.Sender.Server
 
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
 	name := GetChatName(client, messageStore, msg.Info.Chat, chatJID, nil, sender, logger)
@@ -451,6 +453,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		msg.Info.ID,
 		chatJID,
 		sender,
+		senderServer,
 		content,
 		msg.Info.Timestamp,
 		msg.Info.IsFromMe,
@@ -571,20 +574,26 @@ func (d *MediaDownloader) GetMediaType() whatsmeow.MediaType {
 func requestMediaRetry(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID string, mediaKey []byte) (string, error) {
 	// Look up sender and is_from_me for this message, needed to build MessageInfo
 	var sender string
+	var senderServer sql.NullString
 	var isFromMe bool
 	err := messageStore.db.QueryRow(
-		"SELECT sender, is_from_me FROM messages WHERE id = ? AND chat_jid = ?",
+		"SELECT sender, sender_server, is_from_me FROM messages WHERE id = ? AND chat_jid = ?",
 		messageID, chatJID,
-	).Scan(&sender, &isFromMe)
+	).Scan(&sender, &senderServer, &isFromMe)
 	if err != nil {
 		return "", fmt.Errorf("failed to look up message info: %v", err)
 	}
+
+	server := senderServer.String
+	if server == "" {
+		server = types.DefaultUserServer
+	}
+	senderJID := types.NewJID(sender, server)
 
 	chatJIDParsed, err := types.ParseJID(chatJID)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse chat JID: %v", err)
 	}
-	senderJID := types.NewJID(sender, types.DefaultUserServer)
 
 	msgInfo := &types.MessageInfo{
 		ID: types.MessageID(messageID),
@@ -1197,21 +1206,30 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				}
 
 				// Determine sender
-				var sender string
+				var sender, senderServer string
 				isFromMe := false
 				if msg.Message.Key != nil {
 					if msg.Message.Key.FromMe != nil {
 						isFromMe = *msg.Message.Key.FromMe
 					}
 					if !isFromMe && msg.Message.Key.Participant != nil && *msg.Message.Key.Participant != "" {
-						sender = *msg.Message.Key.Participant
+						if participantJID, err := types.ParseJID(*msg.Message.Key.Participant); err == nil {
+							sender = participantJID.User
+							senderServer = participantJID.Server
+						} else {
+							// Fall back to the raw string if it doesn't parse as a JID
+							sender = *msg.Message.Key.Participant
+						}
 					} else if isFromMe {
 						sender = client.Store.ID.User
+						senderServer = client.Store.ID.Server
 					} else {
 						sender = jid.User
+						senderServer = jid.Server
 					}
 				} else {
 					sender = jid.User
+					senderServer = jid.Server
 				}
 
 				// Store message
@@ -1232,6 +1250,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					msgID,
 					chatJID,
 					sender,
+					senderServer,
 					content,
 					timestamp,
 					isFromMe,
