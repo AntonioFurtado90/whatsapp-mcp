@@ -65,6 +65,24 @@ The project runs entirely in Docker — no Go, Python, uv or FFmpeg needs to be 
 
 4. **Connect to the MCP server**
 
+   #### Claude Code (CLI)
+
+   From the repo root:
+
+   ```bash
+   claude mcp add whatsapp -- docker compose -f "$(pwd)/docker-compose.yml" run --rm -T whatsapp-mcp-server
+   ```
+
+   Verify it connected:
+
+   ```bash
+   claude mcp list
+   ```
+
+   You should see `whatsapp: ... - ✔ Connected`. If you had a previous non-Docker entry, remove it first with `claude mcp remove whatsapp`. Note that a Claude Code session started before you added/fixed the server won't pick up the change — start a new session (or restart) for the `whatsapp` tools to show up.
+
+   #### Claude Desktop / Cursor
+
    Copy the below json with the appropriate {{PATH}} value:
 
    ```json
@@ -86,7 +104,7 @@ The project runs entirely in Docker — no Go, Python, uv or FFmpeg needs to be 
    }
    ```
 
-   For **Claude**, save this as `claude_desktop_config.json` in your Claude Desktop configuration directory at:
+   For **Claude Desktop**, save this as `claude_desktop_config.json` in your Claude Desktop configuration directory at:
 
    ```
    ~/Library/Application Support/Claude/claude_desktop_config.json
@@ -102,7 +120,7 @@ The project runs entirely in Docker — no Go, Python, uv or FFmpeg needs to be 
 
    Open Claude Desktop and you should now see WhatsApp as an available integration.
 
-   Or restart Cursor.
+   Or restart Cursor. (Claude Code picks up the change on its next session, as noted above.)
 
 ## Architecture Overview
 
