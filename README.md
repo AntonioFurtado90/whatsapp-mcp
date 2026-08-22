@@ -14,6 +14,17 @@ Here's an example of what you can do when it's connected to Claude.
 
 > *Caution:* as with many MCP servers, the WhatsApp MCP is subject to [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/). This means that project injection could lead to private data exfiltration.
 
+## Changes in this fork
+
+This fork moves the whole project into Docker, following [the Twelve-Factor App](https://12factor.net/) methodology:
+
+- **No host dependencies**: Go, Python, uv and FFmpeg are no longer required on the machine running this — both services build and run entirely inside containers (`whatsapp-bridge/Dockerfile`, `whatsapp-mcp-server/Dockerfile`, `docker-compose.yml`).
+- **Config via environment**: the MCP server's bridge URL and database path (`WHATSAPP_API_BASE_URL`, `MESSAGES_DB_PATH`) are now read from the environment instead of being hardcoded, matching how the Go bridge already worked. See `.env.example`.
+- **Portable data storage**: the WhatsApp session, message database and downloaded media live in a single bind-mounted directory (`WHATSAPP_DATA_DIR`, default `./data/whatsapp-store`) shared by both containers, so moving the deployment to another machine is just a matter of copying that directory over.
+- **CI**: `scripts/ci.sh` builds both images and runs the Go and Python test suites, all through Docker — mirrored in `.github/workflows/ci.yml`. A new `whatsapp-mcp-server/test_whatsapp.py` covers the env-var config behavior.
+
+See the [Installation](#installation) section below for the updated Docker-based setup.
+
 ## Installation
 
 The project runs entirely in Docker — no Go, Python, uv or FFmpeg needs to be installed on the host.
