@@ -16,13 +16,12 @@ Here's an example of what you can do when it's connected to Claude.
 
 ## Installation
 
+The project runs entirely in Docker — no Go, Python, uv or FFmpeg needs to be installed on the host.
+
 ### Prerequisites
 
-- Go
-- Python 3.6+
+- Docker and Docker Compose
 - Anthropic Claude Desktop app (or Cursor)
-- UV (Python package manager), install with `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- FFmpeg (_optional_) - Only needed for audio messages. If you want to send audio files as playable WhatsApp voice messages, they must be in `.ogg` Opus format. With FFmpeg installed, the MCP server will automatically convert non-Opus audio files. Without FFmpeg, you can still send raw audio files using the `send_file` tool.
 
 ### Steps
 
@@ -33,33 +32,43 @@ Here's an example of what you can do when it's connected to Claude.
    cd whatsapp-mcp
    ```
 
-2. **Run the WhatsApp bridge**
-
-   Navigate to the whatsapp-bridge directory and run the Go application:
+2. **Configure**
 
    ```bash
-   cd whatsapp-bridge
-   go run main.go
+   cp .env.example .env
    ```
 
-   The first time you run it, you will be prompted to scan a QR code. Scan the QR code with your WhatsApp mobile app to authenticate.
+   Edit `.env` if you want the WhatsApp session/database/media stored somewhere other than `./data/whatsapp-store`, or if your host UID/GID (`id -u` / `id -g`) differ from the defaults.
 
-   After approximately 20 days, you will might need to re-authenticate.
+3. **Build and start the WhatsApp bridge**
 
-3. **Connect to the MCP server**
+   ```bash
+   docker compose --profile mcp build
+   docker compose up -d whatsapp-bridge
+   docker compose logs -f whatsapp-bridge
+   ```
 
-   Copy the below json with the appropriate {{PATH}} values:
+   The first time you run it, a QR code will be printed to the logs — scan it with your WhatsApp mobile app to authenticate. Once connected, `Ctrl+C` out of the logs (the container keeps running in the background). The session persists in `WHATSAPP_DATA_DIR`, so you won't need to scan again on restart.
+
+   After approximately 20 days, you might need to re-authenticate.
+
+4. **Connect to the MCP server**
+
+   Copy the below json with the appropriate {{PATH}} value:
 
    ```json
    {
      "mcpServers": {
        "whatsapp": {
-         "command": "{{PATH_TO_UV}}", // Run `which uv` and place the output here
+         "command": "docker",
          "args": [
-           "--directory",
-           "{{PATH_TO_SRC}}/whatsapp-mcp/whatsapp-mcp-server", // cd into the repo, run `pwd` and enter the output here + "/whatsapp-mcp-server"
+           "compose",
+           "-f",
+           "{{PATH_TO_SRC}}/whatsapp-mcp/docker-compose.yml", // cd into the repo, run `pwd` and enter the output here + "/docker-compose.yml"
            "run",
-           "main.py"
+           "--rm",
+           "-T",
+           "whatsapp-mcp-server"
          ]
        }
      }
@@ -78,33 +87,11 @@ Here's an example of what you can do when it's connected to Claude.
    ~/.cursor/mcp.json
    ```
 
-4. **Restart Claude Desktop / Cursor**
+5. **Restart Claude Desktop / Cursor**
 
    Open Claude Desktop and you should now see WhatsApp as an available integration.
 
    Or restart Cursor.
-
-### Windows Compatibility
-
-If you're running this project on Windows, be aware that `go-sqlite3` requires **CGO to be enabled** in order to compile and work properly. By default, **CGO is disabled on Windows**, so you need to explicitly enable it and have a C compiler installed.
-
-#### Steps to get it working:
-
-1. **Install a C compiler**  
-   We recommend using [MSYS2](https://www.msys2.org/) to install a C compiler for Windows. After installing MSYS2, make sure to add the `ucrt64\bin` folder to your `PATH`.  
-   → A step-by-step guide is available [here](https://code.visualstudio.com/docs/cpp/config-mingw).
-
-2. **Enable CGO and run the app**
-
-   ```bash
-   cd whatsapp-bridge
-   go env -w CGO_ENABLED=1
-   go run main.go
-   ```
-
-Without this setup, you'll likely run into errors like:
-
-> `Binary was compiled with 'CGO_ENABLED=0', go-sqlite3 requires cgo to work.`
 
 ## Architecture Overview
 
@@ -116,9 +103,10 @@ This application consists of two main components:
 
 ### Data Storage
 
-- All message history is stored in a SQLite database within the `whatsapp-bridge/store/` directory
+- All message history is stored in a SQLite database within `$WHATSAPP_DATA_DIR` (`./data/whatsapp-store` by default), bind-mounted into both containers at `/app/store`
 - The database maintains tables for chats and messages
 - Messages are indexed for efficient searching and retrieval
+- Downloaded media also lands in `$WHATSAPP_DATA_DIR`, so it stays accessible from the host after `download_media` runs
 
 ## Usage
 
@@ -169,8 +157,7 @@ By default, just the metadata of the media is stored in the local database. The 
 
 ## Troubleshooting
 
-- If you encounter permission issues when running uv, you may need to add it to your PATH or use the full path to the executable.
-- Make sure both the Go application and the Python server are running for the integration to work properly.
+- Make sure the `whatsapp-bridge` container is running (`docker compose ps`) — the MCP server container is started on demand by Claude Desktop/Cursor and depends on the bridge being reachable at `WHATSAPP_API_BASE_URL`.
 
 ### Authentication Issues
 
@@ -178,6 +165,6 @@ By default, just the metadata of the media is stored in the local database. The 
 - **WhatsApp Already Logged In**: If your session is already active, the Go bridge will automatically reconnect without showing a QR code.
 - **Device Limit Reached**: WhatsApp limits the number of linked devices. If you reach this limit, you'll need to remove an existing device from WhatsApp on your phone (Settings > Linked Devices).
 - **No Messages Loading**: After initial authentication, it can take several minutes for your message history to load, especially if you have many chats.
-- **WhatsApp Out of Sync**: If your WhatsApp messages get out of sync with the bridge, delete both database files (`whatsapp-bridge/store/messages.db` and `whatsapp-bridge/store/whatsapp.db`) and restart the bridge to re-authenticate.
+- **WhatsApp Out of Sync**: If your WhatsApp messages get out of sync with the bridge, delete both database files (`messages.db` and `whatsapp.db` inside `$WHATSAPP_DATA_DIR`) and restart the bridge (`docker compose restart whatsapp-bridge`) to re-authenticate.
 
 For additional Claude Desktop integration troubleshooting, see the [MCP documentation](https://modelcontextprotocol.io/quickstart/server#claude-for-desktop-integration-issues). The documentation includes helpful tips for checking logs and resolving common issues.

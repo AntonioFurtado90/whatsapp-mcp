@@ -1,0 +1,23 @@
+services:
+  whatsapp-bridge:
+    build: ./whatsapp-bridge
+    container_name: whatsapp-bridge
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      WHATSAPP_STORE_DIR: /app/store
+      WHATSAPP_REST_PORT: "8090"
+    volumes:
+      - ${WHATSAPP_DATA_DIR:-./data/whatsapp-store}:/app/store
+
+  whatsapp-mcp-server:
+    build: ./whatsapp-mcp-server
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      WHATSAPP_API_BASE_URL: http://whatsapp-bridge:8090/api
+      MESSAGES_DB_PATH: /app/store/messages.db
+    volumes:
+      - ${WHATSAPP_DATA_DIR:-./data/whatsapp-store}:/app/store
+    depends_on:
+      - whatsapp-bridge
+    profiles: ["mcp"]
