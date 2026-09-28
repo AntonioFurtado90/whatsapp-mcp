@@ -1,12 +1,39 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestShouldRetryMediaDownload(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		skipRetry bool
+		want      bool
+	}{
+		{"403 without skipRetry retries", whatsmeow.ErrMediaDownloadFailedWith403, false, true},
+		{"404 without skipRetry retries", whatsmeow.ErrMediaDownloadFailedWith404, false, true},
+		{"410 without skipRetry retries", whatsmeow.ErrMediaDownloadFailedWith410, false, true},
+		{"403 with skipRetry does not retry", whatsmeow.ErrMediaDownloadFailedWith403, true, false},
+		{"unrelated error does not retry", errors.New("hash of media ciphertext doesn't match"), false, false},
+		{"unrelated error with skipRetry does not retry", errors.New("boom"), true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRetryMediaDownload(tt.err, tt.skipRetry)
+			if got != tt.want {
+				t.Errorf("shouldRetryMediaDownload(%v, %v) = %v, want %v", tt.err, tt.skipRetry, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestExtractDirectPathFromURL(t *testing.T) {
 	tests := []struct {

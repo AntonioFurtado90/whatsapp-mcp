@@ -495,6 +495,10 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 type DownloadMediaRequest struct {
 	MessageID string `json:"message_id"`
 	ChatJID   string `json:"chat_jid"`
+	// SkipRetry skips the media retry protocol (which can block for up to
+	// 20s waiting on the phone) on a failed direct download, failing fast
+	// instead. Intended for bulk downloads; defaults to false.
+	SkipRetry bool `json:"skip_retry,omitempty"`
 }
 
 // DownloadMediaResponse represents the response for the download media API
@@ -649,8 +653,21 @@ func requestMediaRetry(client *whatsmeow.Client, messageStore *MessageStore, mes
 	}
 }
 
+// shouldRetryMediaDownload reports whether a failed download is worth
+// retrying via the media retry protocol (which can block for up to 20s
+// waiting on the phone). skipRetry lets bulk callers opt out of that wait
+// and fail fast instead.
+func shouldRetryMediaDownload(err error, skipRetry bool) bool {
+	if skipRetry {
+		return false
+	}
+	return errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403) ||
+		errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+		errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410)
+}
+
 // Function to download media from a message
-func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID string) (bool, string, string, string, error) {
+func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, messageID, chatJID string, skipRetry bool) (bool, string, string, string, error) {
 	// Query the database for the message
 	var mediaType, filename, url, directPath string
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
@@ -741,11 +758,10 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	mediaData, err := client.Download(context.Background(), downloader)
 	if err != nil {
 		// Media delivered via history sync often needs a fresh DirectPath/key
-		// via the media retry protocol before it can be downloaded.
-		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith403) ||
-			errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
-			errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-
+		// via the media retry protocol before it can be downloaded. Callers
+		// doing a bulk pass can set skipRetry to fail fast instead of
+		// blocking on the phone's response.
+		if shouldRetryMediaDownload(err, skipRetry) {
 			fmt.Printf("Initial download failed (%v), requesting media retry...\n", err)
 			newDirectPath, retryErr := requestMediaRetry(client, messageStore, messageID, chatJID, mediaKey)
 			if retryErr != nil {
@@ -866,7 +882,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		}
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID)
+		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID, req.SkipRetry)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")

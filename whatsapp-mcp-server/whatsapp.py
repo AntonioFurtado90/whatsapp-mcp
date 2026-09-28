@@ -727,13 +727,16 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
-def download_media(message_id: str, chat_jid: str) -> Optional[str]:
+def download_media(message_id: str, chat_jid: str, skip_retry: bool = False) -> Optional[str]:
     """Download media from a message and return the local file path.
-    
+
     Args:
         message_id: The ID of the message containing the media
         chat_jid: The JID of the chat containing the message
-    
+        skip_retry: If True, don't wait on the phone's media retry response
+            (up to 20s) when the direct download fails; fail immediately
+            instead. Intended for bulk downloads.
+
     Returns:
         The local file path if download was successful, None otherwise
     """
@@ -741,7 +744,8 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
         url = f"{WHATSAPP_API_BASE_URL}/download"
         payload = {
             "message_id": message_id,
-            "chat_jid": chat_jid
+            "chat_jid": chat_jid,
+            "skip_retry": skip_retry
         }
         
         response = requests.post(url, json=payload)
