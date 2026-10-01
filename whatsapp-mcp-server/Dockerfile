@@ -15,6 +15,7 @@ COPY *.py ./
 
 ENV WHATSAPP_API_BASE_URL=http://whatsapp-bridge:8090/api
 ENV MESSAGES_DB_PATH=/app/store/messages.db
+ENV PIPELINE_STATE_DB_PATH=/app/store/pipeline_state.db
 
 # Invoke the synced venv's interpreter directly (rather than `uv run`) so no
 # writable HOME/cache dir is needed at runtime -- the container may run as an
