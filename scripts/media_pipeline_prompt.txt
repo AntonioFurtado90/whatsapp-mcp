@@ -1,0 +1,27 @@
+You are running as an unattended hourly job for a law firm's WhatsApp archive (no human present to ask questions -- use your best judgment and keep going instead of stopping to ask). Work entirely inside {{REPO_ROOT}} (a Docker-compose project containing a WhatsApp bridge and a Python MCP server). Do not touch git, do not commit anything.
+
+Goal: find newly downloaded WhatsApp attachments, give each one a short descriptive Portuguese filename based on its actual content, and upload it to the right client folder in Google Drive.
+
+Step 1 -- get the manifest of new files:
+Run (from {{REPO_ROOT}}):
+  docker compose --profile mcp run --rm --no-deps whatsapp-mcp-server /app/.venv/bin/python download_new_media.py
+Each stdout line is one JSON object: {"message_id": "...", "chat_jid": "...", "media_type": "image"|"document", "path": "/app/store/<chat_jid>/<original_filename>"}.
+If there is no output, there is nothing new -- stop here and report "no new attachments".
+
+Step 2 -- map container paths to host paths:
+The container path "/app/store/..." corresponds to the host path "{{DATA_DIR}}/..." (relative to {{REPO_ROOT}}). Use the host path for every Read/mv below.
+
+Step 3 -- for each manifest entry, in order:
+a. Read the file at its host path (image: view it; PDF: read its text/pages; .zip: list contents with `unzip -l`, don't extract).
+b. Pick a short filename in PORTUGUESE describing the content (e.g. "Comprovante_Pagamento_Pix_Energisa.pdf", "RG_Frente_Joao_Silva.jpg", "Blusa_Listrada_Azul.jpg"). Use Title_Case_With_Underscores, keep the original extension, no slashes/colons, under ~60 chars before the extension. If a photo shows a real person generically, name it tastefully/generically (e.g. "Foto_Pessoal.jpg") -- never anything sexual or degrading. If the file can't be read/opened, leave it with its original name and skip to the next one (still worth uploading to Drive under its current name).
+c. Rename it in place on the host with `mv -n "<old>" "<new>"`. If the old path still exists after that (name collision with a sibling file already in that folder), retry with " 2", " 3", ... appended before the extension until it succeeds.
+d. The client/contact name for this file is simply the CURRENT name of its parent directory under {{DATA_DIR}} (folders were already renamed to client names where known; some are still raw WhatsApp IDs like "...@lid" -- that's fine, use that as the folder/client name as-is, don't try to resolve it).
+e. In Google Drive, find or create the matching subfolder for that client name under the root folder (id "{{DRIVE_ROOT_FOLDER_ID}}"):
+   - Search: query `parentId = '{{DRIVE_ROOT_FOLDER_ID}}' and title = '<client name>' and mimeType = 'application/vnd.google-apps.folder'`.
+   - If none found, create one: title = `<client name>`, mimeType `application/vnd.google-apps.folder`, parentId `{{DRIVE_ROOT_FOLDER_ID}}`.
+f. Upload the renamed file into that subfolder: read its bytes, base64-encode, and call the Drive create tool with title = the new filename, base64Content = the encoded bytes, contentMimeType = the correct mime type for its extension (image/jpeg, image/png, application/pdf, application/zip), disableConversionToGoogleType = true, parentId = the subfolder's id.
+g. Only after the Drive upload call succeeds, mark the message as done:
+   docker compose --profile mcp run --rm --no-deps whatsapp-mcp-server /app/.venv/bin/python pipeline_state.py mark "<message_id>" "<chat_jid>"
+   (use the exact message_id/chat_jid from this manifest entry). If the Drive upload failed, do NOT mark it -- leave it for next hour's run to retry, and move on to the next entry.
+
+Step 4 -- when all entries are handled, print one short summary line: how many succeeded, how many failed and why (one-line reasons, no per-file dump).
