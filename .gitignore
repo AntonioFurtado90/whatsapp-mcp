@@ -2,4 +2,5 @@
 claude_desktop_config.json
 whatsapp.log
 data/
+logs/
 .env

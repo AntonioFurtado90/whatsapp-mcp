@@ -10,16 +10,21 @@ export PATH="/home/antonio/.local/bin:$PATH"
 
 cd "$(dirname "$0")/.."
 
-set -a
-source .env
-set +a
+# Read only the specific keys we need rather than sourcing the whole file:
+# .env also sets UID, which is a readonly builtin in bash and would abort
+# the script if sourced directly.
+env_var() {
+  grep -E "^$1=" .env | tail -1 | cut -d'=' -f2-
+}
 
-if [ -z "${GOOGLE_DRIVE_ROOT_FOLDER_ID:-}" ]; then
+GOOGLE_DRIVE_ROOT_FOLDER_ID="$(env_var GOOGLE_DRIVE_ROOT_FOLDER_ID)"
+if [ -z "$GOOGLE_DRIVE_ROOT_FOLDER_ID" ]; then
   echo "$(date -u +%FT%TZ) GOOGLE_DRIVE_ROOT_FOLDER_ID not set in .env, skipping run." >&2
   exit 0
 fi
 
-DATA_DIR="${WHATSAPP_DATA_DIR:-./data/whatsapp-store}"
+DATA_DIR="$(env_var WHATSAPP_DATA_DIR)"
+DATA_DIR="${DATA_DIR:-./data/whatsapp-store}"
 
 prompt=$(sed \
   -e "s|{{REPO_ROOT}}|$(pwd)|g" \

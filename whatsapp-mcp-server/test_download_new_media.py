@@ -1,5 +1,6 @@
 import sqlite3
 
+import download_new_media as download_new_media_module
 import pipeline_state
 import whatsapp
 from download_new_media import download_new_media
@@ -54,3 +55,29 @@ def test_download_new_media_only_downloads_unprocessed_and_skips_failures(tmp_pa
             "path": "/app/store/123@s.whatsapp.net/msg1.jpg",
         }
     ]
+
+
+def test_download_new_media_caps_how_many_it_takes_per_run(tmp_path, monkeypatch):
+    state_db = str(tmp_path / "pipeline_state.db")
+    monkeypatch.setattr(pipeline_state, "PIPELINE_STATE_DB_PATH", state_db)
+
+    messages_db = str(tmp_path / "messages.db")
+    _make_messages_db(
+        messages_db,
+        [(f"msg{i}", "123@s.whatsapp.net", f"2026-01-01T00:00:{i:02d}Z", "image") for i in range(10)],
+    )
+    monkeypatch.setattr(whatsapp, "MESSAGES_DB_PATH", messages_db)
+    monkeypatch.setattr(download_new_media_module, "MAX_PER_RUN", 3)
+
+    calls = []
+
+    def fake_download_media(message_id, chat_jid, skip_retry=False):
+        calls.append(message_id)
+        return f"/app/store/{chat_jid}/{message_id}.jpg"
+
+    monkeypatch.setattr(whatsapp, "download_media", fake_download_media)
+
+    manifest = download_new_media()
+
+    assert len(calls) == 3
+    assert len(manifest) == 3
