@@ -37,7 +37,7 @@ mkdir -p logs
 echo "=== $(date -u +%FT%TZ) starting media pipeline run ===" >> logs/media_pipeline.log
 claude -p "$prompt" \
   --permission-mode acceptEdits \
-  --allowedTools "Bash,Read,mcp__claude_ai_Google_Drive__search_files,mcp__claude_ai_Google_Drive__create_file" \
+  --allowedTools "Bash,Read" \
   --output-format text \
   >> logs/media_pipeline.log 2>&1
 echo "=== $(date -u +%FT%TZ) finished (exit $?) ===" >> logs/media_pipeline.log

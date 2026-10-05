@@ -16,11 +16,10 @@ a. Read the file at its host path (image: view it; PDF: read its text/pages; .zi
 b. Pick a short filename in PORTUGUESE describing the content (e.g. "Comprovante_Pagamento_Pix_Energisa.pdf", "RG_Frente_Joao_Silva.jpg", "Blusa_Listrada_Azul.jpg"). Use Title_Case_With_Underscores, keep the original extension, no slashes/colons, under ~60 chars before the extension. If a photo shows a real person generically, name it tastefully/generically (e.g. "Foto_Pessoal.jpg") -- never anything sexual or degrading. If the file can't be read/opened, leave it with its original name and skip to the next one (still worth uploading to Drive under its current name).
 c. Rename it in place on the host with `mv -n "<old>" "<new>"`. If the old path still exists after that (name collision with a sibling file already in that folder), retry with " 2", " 3", ... appended before the extension until it succeeds.
 d. The client/contact name for this file is simply the CURRENT name of its parent directory under {{DATA_DIR}} (folders were already renamed to client names where known; some are still raw WhatsApp IDs like "...@lid" -- that's fine, use that as the folder/client name as-is, don't try to resolve it).
-e. In Google Drive, find or create the matching subfolder for that client name under the root folder (id "{{DRIVE_ROOT_FOLDER_ID}}"):
-   - Search: query `parentId = '{{DRIVE_ROOT_FOLDER_ID}}' and title = '<client name>' and mimeType = 'application/vnd.google-apps.folder'`.
-   - If none found, create one: title = `<client name>`, mimeType `application/vnd.google-apps.folder`, parentId `{{DRIVE_ROOT_FOLDER_ID}}`.
-f. Upload the renamed file into that subfolder: read its bytes, base64-encode, and call the Drive create tool with title = the new filename, base64Content = the encoded bytes, contentMimeType = the correct mime type for its extension (image/jpeg, image/png, application/pdf, application/zip), disableConversionToGoogleType = true, parentId = the subfolder's id.
-g. Only after the Drive upload call succeeds, mark the message as done:
+e. Upload the renamed file to Google Drive with rclone (it creates the client subfolder automatically if it doesn't exist yet, and handles any file size -- do NOT use the Drive MCP tool/inline base64 for this, it corrupts or rejects real-sized files):
+     rclone copyto "<host path to renamed file>" "gdrive:<client name>/<new filename>" --drive-root-folder-id "{{DRIVE_ROOT_FOLDER_ID}}"
+   Check the command's exit code. Exit 0 means it succeeded.
+f. Only after that rclone command exits 0, mark the message as done:
    docker compose --profile mcp run --rm --no-deps whatsapp-mcp-server /app/.venv/bin/python pipeline_state.py mark "<message_id>" "<chat_jid>"
    (use the exact message_id/chat_jid from this manifest entry). If the Drive upload failed, do NOT mark it -- leave it for next hour's run to retry, and move on to the next entry.
 
